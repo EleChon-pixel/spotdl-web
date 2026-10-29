@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Homelab Music Downloader</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #0d1117; color: #e6edf3; }
+    main { max-width: 840px; margin: 40px auto; padding: 0 20px 45px; }
+    h1 { font-size: clamp(1.5rem, 4vw, 2.3rem); margin: 0 0 7px; }
+    h2 { font-size: 1.15rem; margin: 0 0 16px; }
+    p, small { color: #9daab9; }
+    .card { background: #161d27; border: 1px solid #303846; padding: 22px; border-radius: 14px; margin-top: 20px; }
+    label { display: block; margin-bottom: 10px; font-weight: 600; }
+    .entry { display: flex; gap: 10px; }
+    input { min-width: 0; flex: 1; background: #0d1117; color: #fff; border: 1px solid #58677a; padding: 13px; border-radius: 9px; font: inherit; }
+    button { cursor: pointer; border: 0; border-radius: 9px; padding: 13px 18px; color: #09150b; background: #60d17b; font-weight: 750; }
+    button:disabled { opacity: .6; cursor: wait; }
+    #message { min-height: 22px; margin-top: 13px; }
+    .job { border-top: 1px solid #303846; padding: 15px 0; }
+    .job:first-of-type { border-top: 0; }
+    .job-header { display: flex; gap: 8px; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+    .job-url { color: #adc7ec; word-break: break-all; font-size: .92rem; }
+    .pill { text-transform: uppercase; letter-spacing: .04em; border-radius: 99px; padding: 4px 9px; background: #344056; font-size: .7rem; font-weight: 800; }
+    .pill.completed { background: #174e32; color: #9df0ac; }
+    .pill.failed { background: #502831; color: #ffc3c3; }
+    .pill.running { background: #314d75; color: #bed7ff; }
+    details { margin-top: 10px; }
+    summary { cursor: pointer; color: #aebdd1; }
+    pre { max-height: 230px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; background: #090e16; padding: 12px; border-radius: 8px; font-size: .75rem; line-height: 1.5; }
+    @media(max-width: 570px) { main { margin-top: 25px; } .entry { flex-direction: column; } button { width: 100%; } }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Homelab Music Downloader</h1>
+  <p>Paste a Spotify track, album, or playlist URL. spotDL finds matching audio on YouTube and saves it to your Navidrome music library.</p>
+  <section class="card">
+    <form id="download-form">
+      <label for="url">Spotify URL</label>
+      <div class="entry">
+        <input id="url" type="url" placeholder="https://open.spotify.com/playlist/..." required autocomplete="off" spellcheck="false">
+        <button id="submit" type="submit">Download</button>
+      </div>
+    </form>
+    <div id="message" role="status" aria-live="polite"></div>
+  </section>
+  <section class="card">
+    <h2>Download queue</h2>
+    <div id="jobs"><p>No jobs yet.</p></div>
+    <small>Updates every 3 seconds. Tasks are processed one at a time; the list resets if the container restarts.</small>
+  </section>
+</main>
+<script>
+  const form = document.getElementById('download-form');
+  const input = document.getElementById('url');
+  const button = document.getElementById('submit');
+  const message = document.getElementById('message');
+  const jobsElement = document.getElementById('jobs');
+  const expanded = new Set();
+
+  async function refresh() {
+    try {
+      const response = await fetch('api/jobs', {cache: 'no-store'});
+      if (!response.ok) throw new Error('Cannot load the queue.');
+      const jobs = await response.json();
+      jobsElement.replaceChildren();
+      if (!jobs.length) {
+        const p = document.createElement('p');
+        p.textContent = 'No jobs yet.';
+        jobsElement.append(p);
+      }
+      for (const job of jobs) {
+        const item = document.createElement('article');
+        item.className = 'job';
+        const header = document.createElement('div');
+        header.className = 'job-header';
+        const url = document.createElement('span');
+        url.className = 'job-url';
+        url.textContent = job.url;
+        const pill = document.createElement('span');
+        pill.className = 'pill ' + job.status;
+        pill.textContent = job.status;
+        header.append(url, pill);
+        item.append(header);
+        const details = document.createElement('details');
+        details.open = expanded.has(job.id);
+        details.addEventListener('toggle', () => details.open ? expanded.add(job.id) : expanded.delete(job.id));
+        const summary = document.createElement('summary');
+        summary.textContent = 'Download details';
+        const logs = document.createElement('pre');
+        logs.textContent = job.logs.join('\n') || 'Waiting to start...';
+        details.append(summary, logs);
+        item.append(details);
+        jobsElement.append(item);
+      }
+    } catch (error) { message.textContent = error.message; }
+  }
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    message.textContent = 'Adding to queue...';
+    try {
+      const response = await fetch('api/jobs', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({url: input.value.trim()})
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(typeof payload.detail === 'string' ? payload.detail : 'Could not add download');
+      message.textContent = 'Added to queue.';
+      input.value = '';
+      await refresh();
+    } catch (error) { message.textContent = error.message; }
+    finally { button.disabled = false; }
+  });
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>

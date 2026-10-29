@@ -1,0 +1,25 @@
+services:
+  spotdl-web:
+    build: .
+    container_name: spotdl-web
+    restart: unless-stopped
+    init: true
+    user: "${PUID}:${PGID}"
+    ports:
+      # Only Tailscale Serve on the host can reach this listener.
+      - "127.0.0.1:8765:8000"
+    environment:
+      HOME: /data
+      XDG_CACHE_HOME: /data/.cache
+    volumes:
+      - /srv/media/Music:/music
+      - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
