@@ -2,6 +2,10 @@
 
 A private web queue for spotDL. Paste a Spotify track, album, or playlist URL; spotDL searches YouTube for matching audio and writes MP3 files to `/srv/media/Music`, which Navidrome and Jellyfin already index.
 
+## Legal notice
+
+This project is only a small web queue around [spotDL](https://github.com/spotDL/spotify-downloader). It contains no copyrighted material and does not bundle spotDL's downloaded content. Downloading from YouTube or Spotify may violate their terms of service and copyright law in your country. Use it only for content you own or have permission to download. You are responsible for how you use it; the author accepts no liability.
+
 ## Deployment
 
 This installation is designed for `homeserver`. Docker binds the app to `127.0.0.1:8765`; Tailscale Serve publishes `/music/` on the existing tailnet-only HTTPS port 8443. It is not exposed to the LAN or public internet. Devices allowed by the tailnet policy can use it without a separate sign-in. Use content you have permission to download.
