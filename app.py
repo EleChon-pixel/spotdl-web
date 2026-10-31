@@ -125,6 +125,11 @@ async def worker() -> None:
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
+    # Recreate the queue for each application lifecycle. asyncio.Queue binds
+    # to an event loop, and reusing it across lifecycles breaks repeated tests
+    # and development restarts.
+    global queue
+    queue = asyncio.Queue()
     task = asyncio.create_task(worker())
     yield
     task.cancel()
