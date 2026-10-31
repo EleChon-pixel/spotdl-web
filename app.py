@@ -27,7 +27,6 @@ ALLOWED_TAILSCALE_USERS = frozenset(
     s.strip().lower() for s in os.environ.get("ALLOWED_TAILSCALE_USERS", "").split(",") if s.strip()
 )
 MAX_ACTIVE_PER_USER = 2
-MAX_PLAYLIST_DOWNLOADS = 100
 MIN_FREE_BYTES = 2 * 1024**3
 
 
@@ -90,7 +89,6 @@ async def worker() -> None:
                 "--format", "mp3",
                 "--output", "{artist}/{album}/{title}.{output-ext}",
                 "--overwrite", "skip",
-                "--max-songs", str(MAX_PLAYLIST_DOWNLOADS),
                 cwd=str(MUSIC_DIR),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
