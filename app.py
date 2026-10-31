@@ -5,12 +5,15 @@ from collections import deque
 from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 import re
+import os
+import hmac
+import shutil
 from pathlib import Path
 from urllib.parse import urlsplit
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
 jobs: dict[str, dict] = {}
@@ -19,6 +22,13 @@ MAX_QUEUED = 10
 MAX_HISTORY = 50
 LOG_LIMIT = 120
 MUSIC_DIR = Path("/music")
+# Trust this header only behind Tailscale Serve on a loopback-only listener.
+ALLOWED_TAILSCALE_USERS = frozenset(
+    s.strip().lower() for s in os.environ.get("ALLOWED_TAILSCALE_USERS", "").split(",") if s.strip()
+)
+MAX_ACTIVE_PER_USER = 2
+MAX_PLAYLIST_DOWNLOADS = 100
+MIN_FREE_BYTES = 2 * 1024**3
 
 
 def now() -> str:
@@ -80,6 +90,7 @@ async def worker() -> None:
                 "--format", "mp3",
                 "--output", "{artist}/{album}/{title}.{output-ext}",
                 "--overwrite", "skip",
+                "--max-songs", str(MAX_PLAYLIST_DOWNLOADS),
                 cwd=str(MUSIC_DIR),
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
@@ -136,6 +147,33 @@ async def private_headers(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def authorize(request: Request, call_next):
+    if request.url.path == "/healthz":
+        return await call_next(request)
+    if not ALLOWED_TAILSCALE_USERS:
+        return JSONResponse({"detail": "Access is not configured"}, status_code=503)
+    user = request.headers.get("tailscale-user-login", "").strip().lower()
+    if not user or not any(hmac.compare_digest(user, allowed) for allowed in ALLOWED_TAILSCALE_USERS):
+        return JSONResponse({"detail": "Access denied"}, status_code=403)
+    request.state.user = user
+    if request.method == "POST":
+        origin = request.headers.get("origin")
+        if origin:
+            parsed = urlsplit(origin)
+            if parsed.scheme != "https" or parsed.netloc.lower() != request.headers.get("host", "").lower():
+                return JSONResponse({"detail": "Invalid request origin"}, status_code=403)
+        if request.headers.get("content-type", "").split(";", 1)[0].strip().lower() != "application/json":
+            return JSONResponse({"detail": "JSON required"}, status_code=415)
+        try:
+            length = int(request.headers.get("content-length", "0"))
+        except ValueError:
+            return JSONResponse({"detail": "Invalid request size"}, status_code=400)
+        if length > 4096:
+            return JSONResponse({"detail": "Request too large"}, status_code=413)
+    return await call_next(request)
+
+
 @app.get("/healthz")
 async def healthz():
     return {"status": "ok"}
@@ -151,13 +189,19 @@ async def index():
 
 
 @app.get("/api/jobs")
-async def get_jobs():
-    return [view(job) for job in reversed(list(jobs.values()))]
+async def get_jobs(request: Request):
+    return [view(job) for job in reversed(list(jobs.values())) if job["owner"] == request.state.user]
 
 
 @app.post("/api/jobs", status_code=202)
-async def create_job(request: DownloadRequest):
+async def create_job(request: DownloadRequest, http_request: Request):
     url = validate_spotify_url(request.url)
+    user = http_request.state.user
+    if shutil.disk_usage(MUSIC_DIR).free < MIN_FREE_BYTES:
+        raise HTTPException(status_code=507, detail="Insufficient disk space")
+    active_user = sum(job["owner"] == user and job["status"] in ("queued", "running") for job in jobs.values())
+    if active_user >= MAX_ACTIVE_PER_USER:
+        raise HTTPException(status_code=429, detail="Too many active jobs for this user")
     active = sum(job["status"] in ("queued", "running") for job in jobs.values())
     if active >= MAX_QUEUED:
         raise HTTPException(status_code=429, detail="Queue is full. Try again later.")
@@ -171,7 +215,7 @@ async def create_job(request: DownloadRequest):
 
     job_id = uuid4().hex[:12]
     job = {
-        "id": job_id, "url": url, "status": "queued", "created": now(),
+        "id": job_id, "owner": user, "url": url, "status": "queued", "created": now(),
         "updated": now(), "return_code": None, "logs": deque(maxlen=LOG_LIMIT),
     }
     jobs[job_id] = job
