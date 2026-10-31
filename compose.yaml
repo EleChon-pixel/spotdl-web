@@ -4,20 +4,25 @@ services:
     container_name: spotdl-web
     restart: unless-stopped
     init: true
-    user: "${PUID}:${PGID}"
+    user: "${PUID:?Set PUID in .env}:${PGID:?Set PGID in .env}"
     ports:
-      # Only Tailscale Serve on the host can reach this listener.
+      # Only Tailscale Serve on the host should reach this listener.
       - "127.0.0.1:8765:8000"
     environment:
       HOME: /data
       XDG_CACHE_HOME: /data/.cache
+      # Allow only these tailnet login identities (enforced by app).
+      ALLOWED_TAILSCALE_USERS: ${ALLOWED_TAILSCALE_USERS:?Set allowed Tailscale login(s) in .env}
     volumes:
       - /srv/media/Music:/music
       - ./data:/data
     security_opt:
       - no-new-privileges:true
-    cap_drop:
-      - ALL
+    cap_drop: [ALL]
+    read_only: true
+    tmpfs: [/tmp]
+    mem_limit: 768m
+    pids_limit: 128
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).close()"]
       interval: 30s
